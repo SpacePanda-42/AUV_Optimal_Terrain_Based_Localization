@@ -6,10 +6,10 @@ AUV_altitude = 80;
 % Set up the AUV scenario
 %%% These were the start and end positions used for showing different
 %%% bathymetry effects
-startPos = [0, -300, AUV_altitude];
-goalPos = [300, 0, AUV_altitude];
-% startPos = [-450, -450, AUV_altitude];
-% goalPos = [450, 450, AUV_altitude];
+% startPos = [0, -300, AUV_altitude];
+% goalPos = [300, 0, AUV_altitude];
+startPos = [-450, -450, AUV_altitude];
+goalPos = [450, 450, AUV_altitude];
 
 color.Gray = 0.651*ones(1,3);
 color.Green = [0.3922 0.8314 0.0745];
@@ -20,15 +20,17 @@ color.Purple = [0.5 0 0.5];
 
 % Generate the topography for the scene
 % scene = generate_scene_topography("flat");
-scene = generate_scene_topography("repeated");
+% scene = generate_scene_topography("repeated");
+scene = generate_scene_topography("varied");
+
 
 % Create an AUV with sensors
 AUV = generate_AUV_object(startPos, scene, "AUV");
 [IMU, lidar] = generate_AUV_sensors(AUV);
 
-% Generate the trajectory the AUV follows
+% Generate the trajectory the AUV follows using dynamic programming
 [trajectory, orientations] = generate_trajectory(startPos, goalPos);
-% load DP_trajectory.mat
+load DP_trajectory.mat
 
 trajectoryLength = size(trajectory, 1);
 
@@ -39,13 +41,17 @@ particles_meas_AUV = generate_AUV_object(startPos, scene, "Particles_AUV");
 [particles_IMU, particles_lidar] = generate_AUV_sensors(particles_meas_AUV);
 n_measurements = 1408;
 
-N_particles = 100;
-% mu0 = [-470, -405];
-% sigma0 = 50^2*eye(2);
+% Number of particles to use for the particle filter
+N_particles = 500;
 
-% values used for slideshow examples
-mu0 = [-50, -250];
-sigma0 = 80^2*eye(2);
+% Multivariate Gaussian distribution for initial position estimate 
+mu0 = [-470, -405];
+sigma0 = 50^2*eye(2);
+
+% values used for slideshow examples (non-DP trajectory)
+% mu0 = [-50, -250];
+% sigma0 = 80^2*eye(2);
+
 
 mu_hist = zeros(2, trajectoryLength);
 mu_hist(:,1) = mu0.';
@@ -68,10 +74,10 @@ for idx = 2:trajectoryLength
 %     IMU_est_vel = IMUReadings.Velocity(1:2); % Will just used a fixed velocity instead of getting reading from this
     
 %     vel_meas = 10 + mvnrnd(0, 0.05^2); % The AUV velocity is 10 by default. Assuming each simulation step is one second. Using same velocity noise as the IMU
-    vel_meas = sqrt(200) + mvnrnd(0, 0.05^2);
-%     vel_meas = 10 + mvnrnd(0, 0.2^2); % VELOCITY FOR DP PLANNED TRAJECTORY
-%     IMU_est_angle = orientations(idx,1) + mvnrnd(0, 0.005^2);
-    IMU_est_angle = pi/4 + mvnrnd(0, 0.005^2);
+    % vel_meas = sqrt(200) + mvnrnd(0, 0.05^2);
+    vel_meas = 10 + mvnrnd(0, 0.2^2); % velocity for DP planned trajectory
+    IMU_est_angle = orientations(idx,1) + mvnrnd(0, 0.005^2);
+    % IMU_est_angle = pi/4 + mvnrnd(0, 0.005^2);
 
 %     IMU_est_orientation = quat2eul(IMUReadings.Orientation, "XYZ"); % Get estimated z rotation from IMU
 %     IMU_est_angle = IMU_est_orientation(3); % Get estimated z rotation from IMU
@@ -125,7 +131,7 @@ for idx = 2:trajectoryLength
             MSE_particles = MSE_particles + norm(particleStates(:,i) - mean(particleStates, 2));
         end
         MSE_particles = 1/N_particles * MSE_particles;
-        disp(MSE_particles)
+        % disp(MSE_particles)
         
         if MSE_particles >= 15
             % Reweight particles and do importance resampling if variance
@@ -142,9 +148,9 @@ for idx = 2:trajectoryLength
             end
             W = W/sum(W);
         else
-            disp(MSE_particles)
-            disp(size(particleStates))
-            disp(size(W))
+            % disp(MSE_particles)
+            % disp(size(particleStates))
+            % disp(size(W))
             % Reinitialize particles if variance becomes too low
             estimated_state = sum((particleStates.*W).').'; % use weighted mean as mu_est
             sigmaReinitialize = 50^2*eye(2);
@@ -181,11 +187,14 @@ for idx = 2:trajectoryLength
 
     % Propagate the AUV
     if idx < trajectoryLength
-        move(AUV, [trajectory(idx+1,:), zeros(1,6), eul2quat([pi/4,0,0]), zeros(1,3)]);
+        move(AUV, [trajectory(idx+1,:), zeros(1,6), eul2quat([IMU_est_angle,0,0]), zeros(1,3)]);
     end
 
     updateSensors(scene);
+    disp("Updating simulation... ");
+    disp([num2str(idx), '/' , num2str(trajectoryLength)]);
 end
+disp("Complete");
 
 figure(2);
 hold on;
@@ -208,15 +217,15 @@ xlabel("Time")
 ylabel("Error")
 hold off;
 
-save simple_case_repeated.mat mu_hist
+% save simple_case_repeated.mat mu_hist
 % save simple_case_traj.mat trajectory
 
-figure(3)
-title("Particle distribution over time (200 particles)")
-for idx=1:trajectoryLength
-    hold on
-    scatter(particles_hist(1,:,idx), particles_hist(2,:,idx+1), 1, [0,0,1], 'filled')
-end
+% figure(3)
+% title("Particle distribution over time")
+% for idx=1:trajectoryLength
+%     hold on
+%     scatter(particles_hist(1,:,idx), particles_hist(2,:,idx+1), 1, [0,0,1], 'filled')
+% end
 
 function show_scene(scene, lidarSampleTime, ax)
         % display actual simulation
@@ -235,8 +244,6 @@ end
 
 % pcshow(pt)
 
-
-% EXAMPLE: HAVE A PLOT THAT DISPLAYS A REGION CENTERED ON THE AUV
 % AUV_x = 0;
 % AUV_y = 0;
 % xlim([AUV_x - 50, AUV_x + 50]) % Use this later. When running the simulation, want to define axis limits to center on where the AUV is
